@@ -103,7 +103,7 @@ export default function MarketplaceSidebar({
         isOpen={createOpen}
         setIsOpen={setCreateOpen}
         menuId="marketplace-create-new"
-        className="z-[120]"
+        className="z-[200]"
         trigger={
           <Ariakit.MenuButton
             render={

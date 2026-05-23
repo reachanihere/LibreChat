@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { X } from 'lucide-react';
 import {
   Button,
@@ -18,6 +19,37 @@ import ActionDetail from './ActionDetail';
 import { getIconForItem } from '../items/icons';
 import { useLocalize } from '~/hooks';
 import { cn } from '~/utils';
+
+function HeaderIcon({ item }: { item: AgentItem }) {
+  const { Icon, colorClass, iconUrl } = getIconForItem(item);
+  const [imgError, setImgError] = useState(false);
+
+  if (iconUrl && !imgError) {
+    return (
+      <span
+        className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-surface-secondary"
+        aria-hidden="true"
+      >
+        <img
+          src={iconUrl}
+          alt=""
+          className="h-full w-full object-cover"
+          loading="lazy"
+          onError={() => setImgError(true)}
+        />
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-xl', colorClass)}
+      aria-hidden="true"
+    >
+      <Icon className="h-5 w-5" strokeWidth={1.75} />
+    </span>
+  );
+}
 
 interface Props {
   item: AgentItem | null;
@@ -59,8 +91,6 @@ const KIND_LABEL_KEYS: Record<AgentItem['kind'], TranslationKeys> = {
 export default function DetailPane({ item, agentId, onClose, onRemove }: Props) {
   const localize = useLocalize();
   const open = item !== null;
-  const Icon = item ? getIconForItem(item).Icon : null;
-  const colorClass = item ? getIconForItem(item).colorClass : '';
   const displayName = item
     ? item.kind === 'builtin'
       ? localize(item.name as TranslationKeys)
@@ -77,17 +107,7 @@ export default function DetailPane({ item, agentId, onClose, onRemove }: Props) 
         {item && (
           <div className="flex max-h-[80vh] flex-col">
             <OGDialogHeader className="flex flex-row items-start gap-3 space-y-0 border-b border-border-light px-6 py-4">
-              {Icon && (
-                <span
-                  className={cn(
-                    'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl',
-                    colorClass,
-                  )}
-                  aria-hidden="true"
-                >
-                  <Icon className="h-5 w-5" strokeWidth={1.75} />
-                </span>
-              )}
+              <HeaderIcon item={item} />
               <div className="min-w-0 flex-1 text-left">
                 <OGDialogTitle className="truncate text-base font-semibold text-text-primary">
                   {displayName}

@@ -53,7 +53,7 @@ describe('ToolCard', () => {
       iconKey: 'execute_code',
     };
     render(<ToolCard item={builtin} selected={false} onToggle={jest.fn()} />);
-    expect(screen.getByText('com_ui_tools_official')).toBeInTheDocument();
+    expect(screen.getByText('com_ui_tools_native')).toBeInTheDocument();
   });
 
   test('renders MCP tool-count pill when toolCount > 0', () => {

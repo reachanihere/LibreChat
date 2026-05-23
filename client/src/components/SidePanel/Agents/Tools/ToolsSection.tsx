@@ -161,11 +161,11 @@ export default function ToolsSection({ agentId }: Props) {
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="flex w-full flex-col items-center gap-1 rounded-xl border border-dashed border-border-light px-2 py-4 text-text-tertiary transition-colors hover:border-border-medium hover:bg-surface-secondary hover:text-text-secondary"
+          className="flex w-full flex-col items-center gap-1 rounded-xl border border-dashed border-border-light px-2 py-4 text-text-secondary transition-colors hover:border-border-medium hover:bg-surface-secondary hover:text-text-secondary"
         >
           <Plus className="h-4 w-4" aria-hidden="true" />
           <span className="text-xs">{localize('com_ui_tools_empty')}</span>
-          <span className="text-[11px] text-text-tertiary">
+          <span className="text-[11px] text-text-secondary">
             {localize('com_ui_tools_empty_hint')}
           </span>
         </button>

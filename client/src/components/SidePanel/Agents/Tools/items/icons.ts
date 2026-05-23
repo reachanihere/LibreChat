@@ -16,6 +16,7 @@ import type { AgentItem } from './types';
 export interface ItemIcon {
   Icon: LucideIcon;
   colorClass: string;
+  iconUrl?: string;
 }
 
 const BUILTIN_ICONS: Record<string, ItemIcon> = {
@@ -64,9 +65,23 @@ const KIND_FALLBACK_ICONS: Record<AgentItem['kind'], ItemIcon> = {
   },
 };
 
+function extractIconUrl(item: AgentItem): string | undefined {
+  if (item.kind === 'tool') {
+    const url = item.plugin?.icon;
+    return typeof url === 'string' && url.length > 0 ? url : undefined;
+  }
+  if (item.kind === 'mcp') {
+    const url = item.server?.metadata?.icon;
+    return typeof url === 'string' && url.length > 0 ? url : undefined;
+  }
+  return undefined;
+}
+
 export function getIconForItem(item: AgentItem): ItemIcon {
   if (item.kind === 'builtin') {
     return BUILTIN_ICONS[item.iconKey] ?? KIND_FALLBACK_ICONS.builtin;
   }
-  return KIND_FALLBACK_ICONS[item.kind];
+  const base = KIND_FALLBACK_ICONS[item.kind];
+  const iconUrl = extractIconUrl(item);
+  return iconUrl ? { ...base, iconUrl } : base;
 }
