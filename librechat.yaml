@@ -1,0 +1,66 @@
+version: 1.3.5
+cache: true
+
+endpoints:
+  custom:
+    - name: "Claude (Copilot)"
+      apiKey: "${COPILOT_PAT}"
+      baseURL: "https://api.githubcopilot.com"
+      headers:
+        Editor-Version: "vscode/1.95.0"
+        Copilot-Integration-Id: "vscode-chat"
+      models:
+        default:
+          - "claude-opus-4.8"
+          - "claude-opus-4.7"
+          - "claude-opus-4.7-1m-internal"
+          - "claude-opus-4.6"
+          - "claude-sonnet-4.6"
+          - "claude-sonnet-4.5"
+          - "claude-haiku-4.5"
+        fetch: false
+      titleConvo: true
+      titleModel: "claude-haiku-4.5"
+      modelDisplayLabel: "Claude"
+      addParams:
+        reasoning_effort: "high"
+      dropParams:
+        - "frequency_penalty"
+        - "presence_penalty"
+
+    - name: "GPT (Copilot)"
+      apiKey: "${COPILOT_PAT}"
+      baseURL: "https://api.githubcopilot.com"
+      headers:
+        Editor-Version: "vscode/1.95.0"
+        Copilot-Integration-Id: "vscode-chat"
+      models:
+        default:
+          - "gpt-5.5"
+          - "gpt-5.4"
+          - "gpt-5.4-mini"
+          - "gpt-5.3-codex"
+          - "gpt-4o"
+          - "gpt-4o-mini"
+        fetch: false
+      titleConvo: true
+      titleModel: "gpt-4o-mini"
+      modelDisplayLabel: "GPT"
+      addParams:
+        reasoning_effort: "high"
+
+    - name: "Gemini (Copilot)"
+      apiKey: "${COPILOT_PAT}"
+      baseURL: "https://api.githubcopilot.com"
+      headers:
+        Editor-Version: "vscode/1.95.0"
+        Copilot-Integration-Id: "vscode-chat"
+      models:
+        default:
+          - "gemini-3.1-pro-preview"
+          - "gemini-3.5-flash"
+          - "gemini-2.5-pro"
+        fetch: false
+      titleConvo: true
+      titleModel: "gemini-3.5-flash"
+      modelDisplayLabel: "Gemini"
