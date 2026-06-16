@@ -1,4 +1,4 @@
 {$DOMAIN} {
-	encode gzip
+	encode gzip zstd
 	reverse_proxy api:3080
 }
