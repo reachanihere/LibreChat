@@ -36,6 +36,12 @@ jobs:
           git reset --hard origin/main
           docker compose -f deploy-compose.yml -f docker-compose.override.yml pull
           docker compose -f deploy-compose.yml -f docker-compose.override.yml up -d
+          # `librechat.yaml` is a single-file bind mount. `git reset --hard` rewrites
+          # the file as a NEW inode, but the running api container stays bound to the
+          # old (now-unlinked) inode, so a YAML-only change never reaches the app and
+          # `up -d` sees no spec change to trigger a recreate. Force-recreate api so it
+          # re-resolves the bind and reloads the config. (No-op cost when nothing changed.)
+          docker compose -f deploy-compose.yml -f docker-compose.override.yml up -d --force-recreate --no-deps api
           docker image prune -f
           REMOTE
 
