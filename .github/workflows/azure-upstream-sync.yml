@@ -24,6 +24,14 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git remote add upstream https://github.com/danny-avila/LibreChat.git
           git fetch upstream main
+          # If our fork is already even with (or ahead of) upstream, there is nothing
+          # to sync — skip the rest so a no-op Monday reports green, not a red failure.
+          if git merge-base --is-ancestor upstream/main origin/main; then
+            echo "Fork already contains upstream/main — nothing to sync."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
           BRANCH="upstream-sync/$(git rev-parse --short upstream/main)"
           git checkout -B "$BRANCH" origin/main
           if git merge --no-edit upstream/main; then
@@ -38,6 +46,7 @@ jobs:
           git push -f origin "$BRANCH"
 
       - name: Open / update the PR
+        if: steps.merge.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -46,6 +55,16 @@ jobs:
           if [ "${{ steps.merge.outputs.conflicts }}" = "true" ]; then
             BODY="$(printf '%s\n\n%s' "$BODY" '⚠️ **Merge conflicts were committed as-is — resolve before merging.**')"
           fi
-          gh pr create --base main --head "${{ steps.merge.outputs.branch }}" \
-            --title "$TITLE" --body "$BODY" 2>/dev/null \
-            || gh pr edit "${{ steps.merge.outputs.branch }}" --title "$TITLE" --body "$BODY"
+          # Create the PR; if one already exists for this branch, update it instead.
+          # `gh pr create` writes the reason to stderr, so capture it and only fall
+          # back to `edit` when the failure is the expected "already exists" case.
+          if ! err="$(gh pr create --base main --head "${{ steps.merge.outputs.branch }}" \
+                        --title "$TITLE" --body "$BODY" 2>&1)"; then
+            echo "$err"
+            if echo "$err" | grep -q "already exists"; then
+              gh pr edit "${{ steps.merge.outputs.branch }}" --title "$TITLE" --body "$BODY"
+            else
+              echo "::error::gh pr create failed for an unexpected reason" >&2
+              exit 1
+            fi
+          fi
