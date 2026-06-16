@@ -1,0 +1,44 @@
+name: Azure Power Schedule
+on:
+  schedule:
+    - cron: "0 1 * * *"   # 02:00 IST (summer)  deallocate
+    - cron: "0 7 * * *"   # 08:00 IST (summer)  start
+    - cron: "0 2 * * *"   # 02:00 GMT (winter)  deallocate
+    - cron: "0 8 * * *"   # 08:00 GMT (winter)  start
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "deallocate or start"
+        required: true
+        default: start
+
+jobs:
+  power:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide action from the real Dublin time
+        id: decide
+        run: |
+          if [ -n "${{ github.event.inputs.action }}" ]; then
+            echo "do=${{ github.event.inputs.action }}" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          HOUR=$(TZ=Europe/Dublin date +%H)
+          echo "Dublin hour: $HOUR"
+          if [ "$HOUR" = "02" ]; then echo "do=deallocate" >> "$GITHUB_OUTPUT"
+          elif [ "$HOUR" = "08" ]; then echo "do=start" >> "$GITHUB_OUTPUT"
+          else echo "do=noop" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Azure login
+        if: steps.decide.outputs.do != 'noop'
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Apply power action
+        if: steps.decide.outputs.do != 'noop'
+        run: |
+          if [ "${{ steps.decide.outputs.do }}" = "deallocate" ]; then
+            az vm deallocate -g ${{ secrets.AZ_RG }} -n ${{ secrets.AZ_VM }}
+          else
+            az vm start -g ${{ secrets.AZ_RG }} -n ${{ secrets.AZ_VM }}
+          fi
