@@ -33,8 +33,12 @@ endpoints:
       titleConvo: true
       titleModel: "claude-haiku-4.5"
       modelDisplayLabel: "Claude"
-      addParams:
-        reasoning_effort: "high"
+      # No `addParams: reasoning_effort` here: addParams overrides the user's
+      # per-conversation pick unconditionally, so forcing it would make the effort
+      # slider in the UI a dead control. With it omitted, the built-in default is
+      # `unset` (the model reasons at its gateway default) and the user can dial
+      # effort per conversation. Same goes for every other openAI-set param the
+      # gateway accepts (max_tokens, top_p, temperature, verbosity, web_search).
       dropParams:
         - "frequency_penalty"
         - "presence_penalty"
