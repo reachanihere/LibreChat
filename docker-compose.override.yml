@@ -1,0 +1,22 @@
+services:
+  # Park the stock nginx client behind a profile that is never enabled, so it
+  # never starts and never competes with Caddy for 80/443. (You cannot remove
+  # its ports via override — compose concatenates port lists.)
+  client:
+    profiles: ["disabled"]
+
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: LibreChat-Caddy
+    restart: always
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy_data:/data
+      - ./caddy_config:/config

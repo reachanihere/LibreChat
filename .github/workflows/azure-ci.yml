@@ -1,0 +1,30 @@
+name: Azure CI
+on:
+  push:
+    branches: [main, azure-copilot-deploy]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate librechat.yaml is parseable YAML
+        run: |
+          python -c "import yaml,sys; yaml.safe_load(open('librechat.yaml')); print('librechat.yaml OK')"
+
+      - name: Validate compose files merge cleanly
+        run: |
+          # Stock compose declares `env_file: .env` on several services; compose
+          # treats a missing env_file as a hard error, so create a throwaway stub.
+          printf 'DOMAIN=ci.example.com\n' > .env
+          DOMAIN=ci.example.com docker compose -f deploy-compose.yml -f docker-compose.override.yml config >/dev/null
+          rm -f .env
+          echo "compose merge OK"
+
+      - name: Lint workflow + shell scripts
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          shellcheck scripts/*.sh

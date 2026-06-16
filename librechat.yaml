@@ -1,0 +1,79 @@
+version: 1.3.5
+cache: true
+
+# All models are served through the GitHub Copilot gateway (one PAT, shared headers).
+# Only models that the gateway exposes via the OpenAI-style /chat/completions API are
+# listed here. Models that are Responses-API-only (e.g. gpt-5.5, gpt-5.4-mini,
+# gpt-5.3-codex) or integrator-restricted (e.g. claude-opus-4.7-1m-internal) are
+# intentionally omitted because LibreChat custom endpoints cannot call them.
+#
+# To add/remove a model: edit the `models.default` list for the relevant endpoint,
+# commit, and push (auto-deploys). Validate a new model first with:
+#   curl https://api.githubcopilot.com/chat/completions -H "Authorization: Bearer $PAT" \
+#        -H 'Editor-Version: vscode/1.95.0' -H 'Copilot-Integration-Id: vscode-chat' \
+#        -d '{"model":"<id>","messages":[{"role":"user","content":"OK"}],"max_completion_tokens":50}'
+
+endpoints:
+  custom:
+    - name: "Claude (Copilot)"
+      apiKey: "${COPILOT_PAT}"
+      baseURL: "https://api.githubcopilot.com"
+      headers:
+        Editor-Version: "vscode/1.95.0"
+        Copilot-Integration-Id: "vscode-chat"
+      models:
+        default:
+          - "claude-opus-4.8"
+          - "claude-opus-4.7"
+          - "claude-opus-4.6"
+          - "claude-sonnet-4.6"
+          - "claude-sonnet-4.5"
+          - "claude-haiku-4.5"
+        fetch: false
+      titleConvo: true
+      titleModel: "claude-haiku-4.5"
+      modelDisplayLabel: "Claude"
+      addParams:
+        reasoning_effort: "high"
+      dropParams:
+        - "frequency_penalty"
+        - "presence_penalty"
+
+    # GPT: gpt-5.4 requires `max_completion_tokens` and rejects `max_tokens`, while the
+    # gpt-4o family accepts both. Dropping `max_tokens` lets all three share one endpoint.
+    # `reasoning_effort` is NOT set here because gpt-4o/gpt-4o-mini reject it (400); only
+    # gpt-5.4 would accept it. If you drop the gpt-4o models, you can add
+    # `addParams: { reasoning_effort: "high" }` back for a gpt-5.4-only endpoint.
+    - name: "GPT (Copilot)"
+      apiKey: "${COPILOT_PAT}"
+      baseURL: "https://api.githubcopilot.com"
+      headers:
+        Editor-Version: "vscode/1.95.0"
+        Copilot-Integration-Id: "vscode-chat"
+      models:
+        default:
+          - "gpt-5.4"
+          - "gpt-4o"
+          - "gpt-4o-mini"
+        fetch: false
+      titleConvo: true
+      titleModel: "gpt-4o-mini"
+      modelDisplayLabel: "GPT"
+      dropParams:
+        - "max_tokens"
+
+    - name: "Gemini (Copilot)"
+      apiKey: "${COPILOT_PAT}"
+      baseURL: "https://api.githubcopilot.com"
+      headers:
+        Editor-Version: "vscode/1.95.0"
+        Copilot-Integration-Id: "vscode-chat"
+      models:
+        default:
+          - "gemini-3.1-pro-preview"
+          - "gemini-3.5-flash"
+          - "gemini-2.5-pro"
+        fetch: false
+      titleConvo: true
+      titleModel: "gemini-3.5-flash"
+      modelDisplayLabel: "Gemini"
