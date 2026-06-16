@@ -100,6 +100,30 @@ gh run list --workflow "Azure Deploy" --limit 1 --repo reachanihere/LibreChat
   - Responses-API-only models (gpt-5.5, gpt-5.4-mini, gpt-5.3-codex) and integrator-restricted
     ones (claude-opus-4.7-1m-internal) are intentionally omitted — custom endpoints can't call them.
 
+- **Context windows are pinned per-model via `tokenConfig`.** Each endpoint has a `tokenConfig`
+  block mapping every model to its real gateway context window. This is **not optional polish** —
+  the number drives when LibreChat truncates/summarizes a conversation, so a wrong value either
+  caps usable context early or overflows the gateway. Two failure modes it fixes:
+  - **Under-report (dot/hyphen trap):** LibreChat's built-in token map keys models with hyphens
+    (`claude-opus-4-8`) but the gateway IDs use dots (`claude-opus-4.8`). Its substring matcher
+    misses and falls back to 200k, so a 1M model showed `180.5k` in the UI. The 1M models
+    (`claude-opus-4.8/4.7/4.6`, `claude-sonnet-4.6`, `gpt-5.4`@1.05M, `gemini-3.1-pro-preview`,
+    `gemini-3.5-flash`) all hit this.
+  - **Over-report (inverse trap):** the gateway caps `gemini-2.5-pro` at **128k**, but the
+    built-in map assumes Gemini's native 1M+, which would over-fill the context and get a hard
+    reject. Pinning forces the gateway's real 128k.
+
+  An exact-keyed `tokenConfig` entry short-circuits the broken matcher (the runtime does an exact
+  `tokensMap[model]` lookup before pattern-matching). `prompt`/`completion` are required by the
+  schema but set to `0` here because usage is flat-rate via Copilot, not billed per token. **When
+  you add a model, add its `tokenConfig` entry too** — pull the real limit from the gateway:
+
+  ```bash
+  curl -s https://api.githubcopilot.com/models -H "Authorization: Bearer $COPILOT_PAT" \
+    -H 'Editor-Version: vscode/1.95.0' -H 'Copilot-Integration-Id: vscode-chat' \
+    | python3 -c "import json,sys; d=json.load(sys.stdin); print({m['id']:(m.get('capabilities',{}).get('limits',{})) for m in d['data']})"
+  ```
+
 ## User management
 
 Registration is **disabled** (`ALLOW_REGISTRATION=false`); accounts are created manually.
