@@ -2,10 +2,14 @@ version: 1.3.5
 cache: true
 
 # All models are served through the GitHub Copilot gateway (one PAT, shared headers).
-# Only models that the gateway exposes via the OpenAI-style /chat/completions API are
-# listed here. Models that are Responses-API-only (e.g. gpt-5.5, gpt-5.4-mini,
-# gpt-5.3-codex) or integrator-restricted (e.g. claude-opus-4.7-1m-internal) are
-# intentionally omitted because LibreChat custom endpoints cannot call them.
+# Each endpoint is structured around the gateway API surface its models need:
+#   - Claude  → native Anthropic /v1/messages (provider: anthropic) — accepts PDF + images
+#   - GPT     → Responses API /responses (useResponsesApi) — gpt-5.5 (Responses-only) + gpt-5.4, accepts PDF + images
+#   - GPT 4o  → OpenAI-style /chat/completions — gpt-4o / gpt-4o-mini, images + text only (gateway blocks PDF)
+#   - Gemini  → OpenAI-style /chat/completions — images + text only (gateway blocks PDF)
+# Native PDF is gated per-model by the gateway: only the Anthropic and Responses
+# surfaces accept it, which is why Claude and gpt-5.x get it but gpt-4o/Gemini can't.
+# Integrator-restricted models (e.g. claude-opus-4.7-1m-internal) remain omitted.
 #
 # To add/remove a model: edit the `models.default` list for the relevant endpoint,
 # commit, and push (auto-deploys). Validate a new model first with:
@@ -18,9 +22,21 @@ endpoints:
     - name: "Claude (Copilot)"
       apiKey: "${COPILOT_PAT}"
       baseURL: "https://api.githubcopilot.com"
+      # `provider: anthropic` routes this endpoint through the native Anthropic
+      # client (the gateway's /v1/messages surface) instead of the OpenAI-style
+      # /chat/completions. That native surface is what accepts PDF `document`
+      # blocks, so every Claude model here can now read PDFs (and images).
+      provider: anthropic
       headers:
         Editor-Version: "vscode/1.95.0"
         Copilot-Integration-Id: "vscode-chat"
+        # The Anthropic SDK authenticates with an `x-api-key` header, but the
+        # Copilot gateway requires `Authorization: Bearer` and 400s on x-api-key
+        # alone ("missing required Authorization header"). Forcing Bearer here
+        # via the admin headers (which merge into the client's defaultHeaders and
+        # win) makes the native path authenticate. ${COPILOT_PAT} is expanded in
+        # header values at request time. Without this line every Claude call 401s.
+        Authorization: "Bearer ${COPILOT_PAT}"
       models:
         default:
           - "claude-opus-4.8"
@@ -50,17 +66,17 @@ endpoints:
       # per-conversation pick unconditionally, so forcing it would make the effort
       # slider in the UI a dead control. With it omitted, the built-in default is
       # `unset` (the model reasons at its gateway default) and the user can dial
-      # effort per conversation. Same goes for every other openAI-set param the
-      # gateway accepts (max_tokens, top_p, temperature, verbosity, web_search).
-      dropParams:
-        - "frequency_penalty"
-        - "presence_penalty"
+      # effort per conversation.
+      # (No dropParams: on the native Anthropic path, dropParams only filters
+      # Anthropic-native keys, so the old frequency_penalty/presence_penalty
+      # entries were a dead no-op — those OpenAI keys are never emitted here.)
 
-    # GPT: gpt-5.4 requires `max_completion_tokens` and rejects `max_tokens`, while the
-    # gpt-4o family accepts both. Dropping `max_tokens` lets all three share one endpoint.
-    # `reasoning_effort` is NOT set here because gpt-4o/gpt-4o-mini reject it (400); only
-    # gpt-5.4 would accept it. If you drop the gpt-4o models, you can add
-    # `addParams: { reasoning_effort: "high" }` back for a gpt-5.4-only endpoint.
+    # GPT splits into two endpoints by API surface. gpt-5.5 and gpt-5.4 are
+    # served via the Responses API (/responses): that surface accepts PDF
+    # `input_file` blocks (native PDF) AND is the ONLY way to reach gpt-5.5,
+    # which the gateway exposes as Responses-only. gpt-4o / gpt-4o-mini reject
+    # the Responses API, so they stay on the OpenAI-style /chat/completions
+    # endpoint below (images + text only — the gateway cannot do PDF for them).
     - name: "GPT (Copilot)"
       apiKey: "${COPILOT_PAT}"
       baseURL: "https://api.githubcopilot.com"
@@ -69,15 +85,43 @@ endpoints:
         Copilot-Integration-Id: "vscode-chat"
       models:
         default:
+          - "gpt-5.5"
           - "gpt-5.4"
+        fetch: false
+      titleConvo: true
+      # gpt-5.5 is Responses-only and not suited to title calls; gpt-5.4 handles them.
+      titleModel: "gpt-5.4"
+      modelDisplayLabel: "GPT"
+      # Route this endpoint to the gateway's /responses surface. This both unlocks
+      # native PDF (input_file blocks) and enables gpt-5.5 at all. On this path
+      # max_completion_tokens becomes max_output_tokens and max_tokens is never
+      # emitted, so the old `dropParams: [max_tokens]` is unnecessary here.
+      addParams:
+        useResponsesApi: true
+      tokenConfig:
+        "gpt-5.5": { context: 1050000, prompt: 0, completion: 0 }
+        "gpt-5.4": { context: 1050000, prompt: 0, completion: 0 }
+
+    # gpt-4o / gpt-4o-mini: OpenAI-style /chat/completions. They reject the
+    # Responses API, so they're split off from gpt-5.x. Images + text-file drop
+    # work; PDF does NOT (the gateway blocks native PDF for these models, and we
+    # deliberately don't add a RAG fallback). `max_tokens` is dropped because the
+    # gateway wants max_completion_tokens.
+    - name: "GPT 4o (Copilot)"
+      apiKey: "${COPILOT_PAT}"
+      baseURL: "https://api.githubcopilot.com"
+      headers:
+        Editor-Version: "vscode/1.95.0"
+        Copilot-Integration-Id: "vscode-chat"
+      models:
+        default:
           - "gpt-4o"
           - "gpt-4o-mini"
         fetch: false
       titleConvo: true
       titleModel: "gpt-4o-mini"
-      modelDisplayLabel: "GPT"
+      modelDisplayLabel: "GPT 4o"
       tokenConfig:
-        "gpt-5.4":      { context: 1050000, prompt: 0, completion: 0 }
         "gpt-4o":       { context: 128000,  prompt: 0, completion: 0 }
         "gpt-4o-mini":  { context: 128000,  prompt: 0, completion: 0 }
       dropParams:

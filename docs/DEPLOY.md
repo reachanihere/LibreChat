@@ -7,8 +7,10 @@ single Azure VM, serving Anthropic / OpenAI / Google models through the **GitHub
 PAT gateway** (`https://api.githubcopilot.com`). Azure provides **hosting only** — per-token
 model usage is billed by GitHub Copilot, not Azure.
 
-One PAT and a shared header set (`Editor-Version`, `Copilot-Integration-Id`) drive three
-custom endpoints (Claude / GPT / Gemini), each a thin menu over the same gateway.
+One PAT and a shared header set (`Editor-Version`, `Copilot-Integration-Id`) drive four
+custom endpoints, each structured around the gateway API surface its models need:
+**Claude** (native Anthropic `/v1/messages`), **GPT** (Responses API — gpt-5.5 + gpt-5.4),
+**GPT 4o** (OpenAI-style `/chat/completions`), and **Gemini** (`/chat/completions`).
 
 ## Coordinates
 
@@ -92,13 +94,18 @@ gh run list --workflow "Azure Deploy" --limit 1 --repo reachanihere/LibreChat
   unconditionally and makes the UI control a dead slider.
 
 - **Gateway quirks baked into the config:**
-  - Claude drops `frequency_penalty` / `presence_penalty` (gateway rejects them).
-  - GPT drops `max_tokens` (gpt-5.4 needs `max_completion_tokens`; dropping lets gpt-5.4 and
-    the gpt-4o family share one endpoint).
+  - **Claude** uses `provider: anthropic` (native `/v1/messages`) and pins an
+    `Authorization: Bearer ${COPILOT_PAT}` header — see the PDF subsection below for why.
+  - **GPT** (gpt-5.5 + gpt-5.4) sets `addParams: { useResponsesApi: true }` to use the
+    Responses API. gpt-5.5 is Responses-only, so this is the only way to reach it; gpt-5.4
+    rides the same surface. `titleModel` is gpt-5.4 because gpt-5.5 isn't suited to title calls.
+  - **GPT 4o** (gpt-4o / gpt-4o-mini) stays on `/chat/completions` and drops `max_tokens`
+    (the gateway wants `max_completion_tokens`). These reject the Responses API, which is why
+    they're a separate endpoint from gpt-5.x.
   - `reasoning_effort` is left at its built-in default (`unset`) so gpt-4o/gpt-4o-mini — which
     reject the param with a 400 — stay safe unless a user explicitly dials it up.
-  - Responses-API-only models (gpt-5.5, gpt-5.4-mini, gpt-5.3-codex) and integrator-restricted
-    ones (claude-opus-4.7-1m-internal) are intentionally omitted — custom endpoints can't call them.
+  - Integrator-restricted models (e.g. `claude-opus-4.7-1m-internal`) are intentionally omitted —
+    custom endpoints can't call them.
 
 - **Context windows are pinned per-model via `tokenConfig`.** Each endpoint has a `tokenConfig`
   block mapping every model to its real gateway context window. This is **not optional polish** —
@@ -124,7 +131,30 @@ gh run list --workflow "Azure Deploy" --limit 1 --repo reachanihere/LibreChat
     | python3 -c "import json,sys; d=json.load(sys.stdin); print({m['id']:(m.get('capabilities',{}).get('limits',{})) for m in d['data']})"
   ```
 
-## User management
+- **Image + PDF support is gated per-model by the gateway API surface.** Images work on every
+  vision model. **Native PDF** (the model actually reads the document) only works on the API
+  surfaces that accept PDF blocks, and the gateway exposes those per-model:
+
+  | Models | Native PDF | API surface / config |
+  |---|---|---|
+  | Claude ×6 | ✅ | `/v1/messages` — endpoint sets `provider: anthropic` |
+  | gpt-5.5, gpt-5.4 | ✅ | `/responses` — endpoint sets `addParams: { useResponsesApi: true }` |
+  | gpt-4o, gpt-4o-mini, Gemini ×3 | ❌ | `/chat/completions` — gateway rejects PDF; **images only** |
+
+  The five right-column models **cannot** read PDFs through this gateway — it rejects PDF blocks
+  on `/chat/completions` and refuses the Responses API for them. There is intentionally **no RAG
+  fallback** (that would need a header-injecting proxy in front of the gateway, since rag_api
+  can't send `Copilot-Integration-Id`). Attaching a PDF to one of those models is a no-op.
+
+  > **The `Authorization: Bearer` line on the Claude endpoint is load-bearing — don't remove it.**
+  > `provider: anthropic` routes Claude through the Anthropic SDK, which authenticates with an
+  > `x-api-key` header. The Copilot gateway **requires `Authorization: Bearer`** and returns
+  > `400 missing required Authorization header` for `x-api-key` alone. The endpoint's `headers`
+  > block pins `Authorization: "Bearer ${COPILOT_PAT}"` (it merges into the client's headers and
+  > wins); without it **every Claude call fails**. If Claude suddenly 400s after a config change,
+  > check this header first.
+
+
 
 Registration is **disabled** (`ALLOW_REGISTRATION=false`); accounts are created manually.
 Run the scripts directly in the api container:
