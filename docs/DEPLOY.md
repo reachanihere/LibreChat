@@ -222,6 +222,22 @@ VM-local and survives `git reset --hard`, **the chosen mode persists across depl
 in `deploy-compose.yml` already excludes Mongo/Meili/rag, so only LLM calls and the `/vpn-status`
 geo-IP check traverse the tunnel.
 
+### Stays on by default across restarts
+
+Once VPN is on, it is the default state through every restart path — no manual re-toggle needed:
+
+- **VM reboot / Azure deallocate→start** (the 02:00–08:00 Dublin power schedule): gluetun runs with
+  `restart: unless-stopped` and api with `restart: always`, so the Docker daemon brings both back
+  automatically, with `PROXY` still in api's environment.
+- **Code deploy** (the `Azure Pipeline`): the profile-gated `vpn` services aren't touched by a plain
+  `up -d`, so the deploy explicitly checks `.env` — when `PROXY=http://gluetun:8888` is set it brings
+  gluetun back up and waits for health *before* recreating api, then asserts `/vpn-status` reports
+  `connected:true` and **fails the deploy** if it doesn't. A silently-broken proxy can't leave the
+  server quietly egressing direct.
+
+To make the server default to *direct* egress again, run `bash scripts/vpn.sh off` (it clears
+`PROXY` from `.env`, so subsequent restarts and deploys stay off).
+
 The same egress is surfaced by **`GET /vpn-status`** (top-level, unauthenticated) and a badge in
 the chat header: it fetches a geo-IP service through the *same* undici dispatcher attached to every
 model call, so `connected:true` + a Nord IP means model traffic is genuinely tunnelled. With VPN

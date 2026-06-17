@@ -99,6 +99,23 @@ jobs:
           fi
           docker compose -f deploy-compose.yml -f docker-compose.override.yml pull
           docker compose -f deploy-compose.yml -f docker-compose.override.yml up -d
+          # Keep NordVPN egress on by default. gluetun lives behind the `vpn`
+          # compose profile, so the plain `up -d` above never (re)starts it. When
+          # .env points api at the gluetun proxy the VPN is meant to be ON, so
+          # explicitly bring the sidecar up and wait for health BEFORE api is
+          # recreated to egress through it. (gluetun `restart: unless-stopped`
+          # already covers VM reboot / Azure deallocate-start; this closes the
+          # deploy path — the one restart that recreates containers from scratch.)
+          if grep -q '^PROXY=http://gluetun:8888' .env; then
+            echo "VPN enabled in .env — ensuring gluetun sidecar is up"
+            docker compose -f deploy-compose.yml -f docker-compose.override.yml --profile vpn up -d gluetun
+            for _ in $(seq 1 20); do
+              health="$(docker inspect --format '{{.State.Health.Status}}' LibreChat-VPN 2>/dev/null || echo starting)"
+              [ "${health}" = "healthy" ] && break
+              sleep 2
+            done
+            echo "gluetun health: ${health:-unknown}"
+          fi
           # `librechat.yaml` is a single-file bind mount. `git reset --hard` rewrites
           # the file as a NEW inode, but the running api container stays bound to the
           # old (now-unlinked) inode, so a YAML-only change never reaches the app and
@@ -106,6 +123,24 @@ jobs:
           # re-resolves the bind and reloads the config. (No-op cost when nothing changed.)
           docker compose -f deploy-compose.yml -f docker-compose.override.yml up -d --force-recreate --no-deps api
           docker image prune -f
+          # Enforce the "VPN on by default" contract: when .env says VPN is on,
+          # the deploy must not finish until api actually reports egress through
+          # NordVPN. This turns a silently-broken proxy (gluetun down / unhealthy)
+          # into a failed deploy instead of a live server quietly egressing direct.
+          if grep -q '^PROXY=http://gluetun:8888' .env; then
+            ok=""
+            for _ in $(seq 1 20); do
+              if curl -fsS localhost:3080/vpn-status 2>/dev/null | grep -q '"connected":[[:space:]]*true'; then
+                ok=1; break
+              fi
+              sleep 3
+            done
+            if [ -z "${ok}" ]; then
+              echo "VPN is enabled in .env but /vpn-status never reported connected:true" >&2
+              exit 1
+            fi
+            echo "VPN egress confirmed connected after deploy"
+          fi
           REMOTE
       - name: Smoke-check the public endpoint
         run: |
