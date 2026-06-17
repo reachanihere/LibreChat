@@ -43,25 +43,25 @@ docker compose -f deploy-compose.yml -f docker-compose.override.yml <cmd>
 | Workflow | Trigger | Does |
 |---|---|---|
 | `Azure CI` | push / PR to `main` | validates `librechat.yaml`, compose merge, shellcheck |
-| `Azure Deploy` | push to `main` + manual | SSH to VM → `git reset --hard origin/main` → pull images → `up -d` → **force-recreate api** → smoke-check `/api/config` |
-| `Azure Upstream Sync` | Mondays 06:17 UTC + manual | merges `danny-avila/LibreChat@main` into a `upstream-sync/<sha>` branch, opens/updates a PR |
+| `Azure Pipeline` | push to `main` + manual | detect code changes → (conditional) build & push `ghcr.io/reachanihere/librechat-api` → SSH to VM → `git reset --hard origin/main` → pin image SHA → pull → `up -d` → **force-recreate api** → smoke-check `/api/config` |
 | `Azure Power Schedule` | 4 daily crons + manual | deallocate/start the VM on the Dublin schedule |
+
+This is a **hard fork** frozen at `v0.8.7-rc1` — there is no upstream-sync automation; changes come only from our own commits to `main`.
 
 Manual runs (the workflow must exist on `main`):
 
 ```bash
-gh workflow run "Azure Deploy"          --repo reachanihere/LibreChat
+gh workflow run "Azure Pipeline"        --repo reachanihere/LibreChat
 gh workflow run "Azure Power Schedule"  --repo reachanihere/LibreChat -f action=start
 gh workflow run "Azure Power Schedule"  --repo reachanihere/LibreChat -f action=deallocate
-gh workflow run "Azure Upstream Sync"   --repo reachanihere/LibreChat
 ```
 
 ## Deploying a change
 
-Push to `main` → `Azure Deploy` ships it automatically. To watch:
+Push to `main` → `Azure Pipeline` ships it automatically. To watch:
 
 ```bash
-gh run list --workflow "Azure Deploy" --limit 1 --repo reachanihere/LibreChat
+gh run list --workflow "Azure Pipeline" --limit 1 --repo reachanihere/LibreChat
 ```
 
 > **Why the deploy force-recreates the api container.** `librechat.yaml` is a *single-file*
@@ -204,20 +204,45 @@ The **Copilot PAT** lives **only** in the VM's `/mnt/data/LibreChat/.env` as `CO
 generate a new PAT, update `.env`, recreate api (`--force-recreate --no-deps api`), confirm a
 live model call works, then revoke the old PAT.
 
-## Updating from upstream
+## VPN egress (NordVPN)
 
-A PR titled `Upstream sync: ...` opens every Monday. Review the diff — pay attention to
-`librechat.yaml`, `deploy-compose.yml`, and `.env` keys — then merge. The merge to `main`
-auto-deploys. If the PR body warns of committed conflicts, resolve them before merging.
+Model calls can be routed out through a NordVPN exit IP via a [gluetun](https://github.com/qdm12/gluetun)
+sidecar (`LibreChat-VPN`), toggled without a redeploy. The sidecar sits behind a compose `vpn`
+profile, so normal deploys never start or stop it.
+
+```bash
+ssh azureuser@20.25.12.137 'cd /mnt/data/LibreChat && bash scripts/vpn.sh on'      # route egress via NordVPN
+ssh azureuser@20.25.12.137 'cd /mnt/data/LibreChat && bash scripts/vpn.sh off'     # back to direct egress
+ssh azureuser@20.25.12.137 'cd /mnt/data/LibreChat && bash scripts/vpn.sh status'  # print /vpn-status JSON
+```
+
+`on` starts gluetun, waits for it to report healthy, sets `PROXY=http://gluetun:8888` in `.env`,
+and force-recreates api. `off` clears `PROXY`, recreates api, and stops gluetun. Because `.env` is
+VM-local and survives `git reset --hard`, **the chosen mode persists across deploys**. `NO_PROXY`
+in `deploy-compose.yml` already excludes Mongo/Meili/rag, so only LLM calls and the `/vpn-status`
+geo-IP check traverse the tunnel.
+
+The same egress is surfaced by **`GET /vpn-status`** (top-level, unauthenticated) and a badge in
+the chat header: it fetches a geo-IP service through the *same* undici dispatcher attached to every
+model call, so `connected:true` + a Nord IP means model traffic is genuinely tunnelled. With VPN
+off it reports `connected:false` and the Azure egress IP.
+
+NordVPN service credentials live **only** in the VM `.env` as `NORD_USER` / `NORD_PASSWORD`
+(`chmod 600`, git-ignored); set `NORD_COUNTRY` to pin an exit country (optional).
+
+> **Copilot abuse-detection caveat.** Routing Copilot-gateway traffic through a shared VPN exit IP
+> can trip GitHub's abuse heuristics. This is opt-in and experimental — if model calls start
+> failing, `bash scripts/vpn.sh off` restores direct egress instantly (no redeploy).
 
 ## Health checks
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' https://librechat-ani.eastus.cloudapp.azure.com/api/config   # expect 200
+curl -s https://librechat-ani.eastus.cloudapp.azure.com/vpn-status                                    # egress IP + country
 ssh azureuser@20.25.12.137 \
   'cd /mnt/data/LibreChat && docker compose -f deploy-compose.yml -f docker-compose.override.yml ps'
 az storage blob list --account-name librechatbackupsani -c mongo-backups --auth-mode login -o table
 ```
 
 Expected containers: `LibreChat-API`, `LibreChat-Caddy`, `chat-mongodb`, `chat-meilisearch`,
-`librechat-rag_api-1`, `librechat-vectordb-1`.
+`librechat-rag_api-1`, `librechat-vectordb-1` (plus `LibreChat-VPN` only when the `vpn` profile is active).

@@ -1,4 +1,10 @@
 services:
+  # Pull our own fork-built image (GHCR) instead of the upstream dev image.
+  # `LIBRECHAT_IMAGE_TAG` is pinned to a commit SHA by the deploy pipeline and
+  # lives in the VM-local .env; it falls back to :latest before the first build.
+  api:
+    image: ghcr.io/reachanihere/librechat-api:${LIBRECHAT_IMAGE_TAG:-latest}
+
   # Park the stock nginx client behind a profile that is never enabled, so it
   # never starts and never competes with Caddy for 80/443. (You cannot remove
   # its ports via override — compose concatenates port lists.)
@@ -20,3 +26,23 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./caddy_data:/data
       - ./caddy_config:/config
+
+  # NordVPN egress sidecar. Behind the `vpn` profile so normal deploys never
+  # start it; `scripts/vpn.sh on` brings it up and points api's PROXY at its
+  # built-in HTTP proxy (http://gluetun:8888). Creds come from the VM-local .env
+  # (NORD_USER / NORD_PASSWORD); they are never committed.
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: LibreChat-VPN
+    profiles: ["vpn"]
+    cap_add: [NET_ADMIN]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - VPN_SERVICE_PROVIDER=nordvpn
+      - VPN_TYPE=openvpn
+      - OPENVPN_USER=${NORD_USER}
+      - OPENVPN_PASSWORD=${NORD_PASSWORD}
+      - SERVER_COUNTRIES=${NORD_COUNTRY:-}
+      - HTTPPROXY=on
+    restart: unless-stopped

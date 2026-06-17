@@ -1217,6 +1217,10 @@ export function getBanner(): Promise<t.TBannerResponse> {
   return request.get(endpoints.banner());
 }
 
+export function getVpnStatus(): Promise<t.TVpnStatusResponse> {
+  return request.get(endpoints.vpnStatus());
+}
+
 export function updateFeedback(
   conversationId: string,
   messageId: string,

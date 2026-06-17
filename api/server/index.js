@@ -274,6 +274,8 @@ const startServer = async () => {
   app.use('/api/mcp', routes.mcp);
   app.use('/api/rum', routes.rum);
 
+  app.use('/vpn-status', routes.vpnStatus);
+
   app.use('/metrics', metricsRouter);
 
   /** 404 for unmatched API routes */

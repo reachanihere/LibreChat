@@ -35,10 +35,12 @@ const keys = require('./keys');
 const user = require('./user');
 const mcp = require('./mcp');
 const rum = require('./rum');
+const vpnStatus = require('./vpnStatus');
 
 module.exports = {
   rum,
   mcp,
+  vpnStatus,
   auth,
   adminAuth,
   adminConfig,

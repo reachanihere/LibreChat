@@ -734,6 +734,13 @@ export type TAcceptTermsResponse = {
 
 export type TBannerResponse = TBanner | null;
 
+export type TVpnStatusResponse = {
+  connected: boolean;
+  ip: string | null;
+  country: string | null;
+  message: string;
+};
+
 export type TUpdateFeedbackRequest = {
   feedback?: TMinimalFeedback;
 };

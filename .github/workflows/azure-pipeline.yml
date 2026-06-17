@@ -1,0 +1,117 @@
+name: Azure Pipeline
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: pipeline
+  cancel-in-progress: false
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.f.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: f
+        with:
+          filters: |
+            image:
+              - 'api/**'
+              - 'client/**'
+              - 'packages/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'Dockerfile*'
+
+  build:
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Prepare environment
+        run: cp .env.example .env
+      - name: Build and push api image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.multi
+          target: api-build
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/librechat-api:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/librechat-api:latest
+          build-args: |
+            BUILD_COMMIT=${{ github.sha }}
+            BUILD_BRANCH=${{ github.ref_name }}
+
+  deploy:
+    needs: [changes, build]
+    if: ${{ always() && !cancelled() && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - name: Start VM if deallocated
+        run: az vm start -g ${{ secrets.AZ_RG }} -n ${{ secrets.AZ_VM }} || true
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+      - name: Pull + recreate
+        env:
+          IMAGE_BUILT: ${{ needs.build.result == 'success' }}
+          SHA: ${{ github.sha }}
+        run: |
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+            "IMAGE_BUILT='$IMAGE_BUILT' SHA='$SHA' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd /mnt/data/LibreChat
+          git fetch origin main
+          git checkout main
+          git reset --hard origin/main
+          # Pin the api image to this commit's build so we never pull a
+          # concurrently-updated :latest. Only when a build actually ran;
+          # config-only pushes keep the prior tag already in .env.
+          if [ "${IMAGE_BUILT}" = "true" ]; then
+            grep -q '^LIBRECHAT_IMAGE_TAG=' .env \
+              && sed -i "s|^LIBRECHAT_IMAGE_TAG=.*|LIBRECHAT_IMAGE_TAG=${SHA}|" .env \
+              || echo "LIBRECHAT_IMAGE_TAG=${SHA}" >> .env
+          fi
+          docker compose -f deploy-compose.yml -f docker-compose.override.yml pull
+          docker compose -f deploy-compose.yml -f docker-compose.override.yml up -d
+          # `librechat.yaml` is a single-file bind mount. `git reset --hard` rewrites
+          # the file as a NEW inode, but the running api container stays bound to the
+          # old (now-unlinked) inode, so a YAML-only change never reaches the app and
+          # `up -d` sees no spec change to trigger a recreate. Force-recreate api so it
+          # re-resolves the bind and reloads the config. (No-op cost when nothing changed.)
+          docker compose -f deploy-compose.yml -f docker-compose.override.yml up -d --force-recreate --no-deps api
+          docker image prune -f
+          REMOTE
+      - name: Smoke-check the public endpoint
+        run: |
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" https://${{ secrets.SSH_HOST }}/api/config || true)
+            [ "$code" = "200" ] && echo "deploy OK" && exit 0
+            echo "waiting ($code)"; sleep 6
+          done
+          echo "deploy smoke check failed" >&2; exit 1

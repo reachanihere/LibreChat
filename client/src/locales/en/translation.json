@@ -1767,6 +1767,8 @@
   "com_ui_versions": "Versions",
   "com_ui_via_server": "in {{0}}",
   "com_ui_view_memory": "View Memory",
+  "com_ui_vpn_connected": "NordVPN connected",
+  "com_ui_vpn_direct": "Direct connection",
   "com_ui_web_search": "Web Search",
   "com_ui_web_search_cohere_key": "Enter Cohere API Key",
   "com_ui_web_search_firecrawl_url": "Firecrawl API URL (optional)",
