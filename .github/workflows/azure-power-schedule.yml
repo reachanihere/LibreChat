@@ -10,7 +10,11 @@ name: Azure Power Schedule
 
 on:
   schedule:
-    - cron: "*/15 * * * *"   # poll every 15 min; each run reconciles to the schedule
+    # Off-peak minutes (deliberately NOT :00/:15/:30/:45). GitHub's scheduler is
+    # busiest at the top of the hour, which is the main cause of late/dropped
+    # scheduled runs — odd minutes dodge that congestion. ~15-min cadence; the
+    # reconciler still converges even if individual runs are skipped or delayed.
+    - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
     inputs:
       mode:
