@@ -1,44 +1,95 @@
 name: Azure Power Schedule
+
+# Reconcile the VM's power state to the Dublin downtime window instead of
+# edge-triggering on exact hours. GitHub's scheduled crons routinely land
+# hours late (or are dropped), and the old exact-hour gate (HOUR == "02")
+# turned every late run into a silent no-op — so the VM never went down.
+# Each run here computes the *desired* state from the real Dublin clock and
+# drives the VM toward it, so a run that lands anywhere inside the window
+# still deallocates, and any run outside it still ensures the VM is up.
+
 on:
   schedule:
-    - cron: "0 1 * * *"   # 02:00 IST (summer)  deallocate
-    - cron: "0 7 * * *"   # 08:00 IST (summer)  start
-    - cron: "0 2 * * *"   # 02:00 GMT (winter)  deallocate
-    - cron: "0 8 * * *"   # 08:00 GMT (winter)  start
+    - cron: "*/15 * * * *"   # poll every 15 min; each run reconciles to the schedule
   workflow_dispatch:
     inputs:
-      action:
-        description: "deallocate or start"
-        required: true
-        default: start
+      mode:
+        description: "auto = reconcile to the Dublin schedule; start/deallocate = force"
+        required: false
+        default: auto
+        type: choice
+        options: [auto, start, deallocate]
+      dry_run:
+        description: "Print the decision but do not change VM power"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: azure-power
+  cancel-in-progress: false
 
 jobs:
   power:
     runs-on: ubuntu-latest
     steps:
-      - name: Decide action from the real Dublin time
+      - name: Decide desired power state
         id: decide
         run: |
-          if [ -n "${{ github.event.inputs.action }}" ]; then
-            echo "do=${{ github.event.inputs.action }}" >> "$GITHUB_OUTPUT"; exit 0
+          set -euo pipefail
+          MODE="${{ github.event.inputs.mode }}"
+          MODE="${MODE:-auto}"
+          if [ "$MODE" = "start" ]; then
+            echo "desired=running" >> "$GITHUB_OUTPUT"
+          elif [ "$MODE" = "deallocate" ]; then
+            echo "desired=deallocated" >> "$GITHUB_OUTPUT"
+          else
+            HOUR=$(TZ=Europe/Dublin date +%H)
+            echo "Dublin hour: $HOUR (downtime window is 02:00-08:00, DST-aware)"
+            # 10# forces base-10 so a leading-zero hour like 08 isn't parsed as octal.
+            if [ "$((10#$HOUR))" -ge 2 ] && [ "$((10#$HOUR))" -lt 8 ]; then
+              echo "desired=deallocated" >> "$GITHUB_OUTPUT"
+            else
+              echo "desired=running" >> "$GITHUB_OUTPUT"
+            fi
           fi
-          HOUR=$(TZ=Europe/Dublin date +%H)
-          echo "Dublin hour: $HOUR"
-          if [ "$HOUR" = "02" ]; then echo "do=deallocate" >> "$GITHUB_OUTPUT"
-          elif [ "$HOUR" = "08" ]; then echo "do=start" >> "$GITHUB_OUTPUT"
-          else echo "do=noop" >> "$GITHUB_OUTPUT"; fi
 
       - name: Azure login
-        if: steps.decide.outputs.do != 'noop'
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Apply power action
-        if: steps.decide.outputs.do != 'noop'
+      - name: Reconcile VM power
+        env:
+          DESIRED: ${{ steps.decide.outputs.desired }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+          AZ_RG: ${{ secrets.AZ_RG }}
+          AZ_VM: ${{ secrets.AZ_VM }}
         run: |
-          if [ "${{ steps.decide.outputs.do }}" = "deallocate" ]; then
-            az vm deallocate -g ${{ secrets.AZ_RG }} -n ${{ secrets.AZ_VM }}
+          set -euo pipefail
+          CURRENT=$(az vm get-instance-view -g "$AZ_RG" -n "$AZ_VM" \
+            --query "instanceView.statuses[?starts_with(code,'PowerState')].code | [0]" \
+            -o tsv 2>/dev/null || echo "PowerState/unknown")
+          CURRENT="${CURRENT#PowerState/}"
+          DRY_RUN="${DRY_RUN:-false}"
+          echo "desired=$DESIRED current=$CURRENT dry_run=$DRY_RUN"
+
+          action=""
+          if [ "$DESIRED" = "deallocated" ]; then
+            case "$CURRENT" in
+              deallocated|deallocating) echo "already $CURRENT — noop"; exit 0 ;;
+              *) action="deallocate" ;;
+            esac
           else
-            az vm start -g ${{ secrets.AZ_RG }} -n ${{ secrets.AZ_VM }}
+            case "$CURRENT" in
+              running|starting) echo "already $CURRENT — noop"; exit 0 ;;
+              *) action="start" ;;
+            esac
           fi
+
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "[dry-run] would run: az vm $action  ($CURRENT -> $DESIRED)"
+            exit 0
+          fi
+          az vm "$action" -g "$AZ_RG" -n "$AZ_VM"
+          echo "applied: az vm $action  ($CURRENT -> $DESIRED)"
